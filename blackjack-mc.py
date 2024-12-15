@@ -21,6 +21,12 @@ from pprint import pprint
 import numpy as np
 import gymnasium as gym
 
+try:
+    from matplotlib import pyplot as plt
+except ImportError:
+    plt = None
+
+
 # Create the Blackjack environment
 env = gym.make('Blackjack-v1', render_mode=None)
 
@@ -70,7 +76,7 @@ class MonteCarloControl:
     def train(self, episodes=50000):
         """Train the policy using Monte Carlo control."""
         for i in range(episodes):
-            episode = self.generate_episode()
+            episode = self.generate_episode()  # policy evaluation
             G = 0  # initialize return
             visited = set()  # keep track of visited state-action pairs
 
@@ -84,7 +90,7 @@ class MonteCarloControl:
                     self.Q[state][action] = np.mean(
                         self.returns[(state, action)]
                     )
-            self.update_policy()
+            self.update_policy()  # policy improvement
 
             # Optional: print progress
             if (i + 1) % 1000 == 0:
@@ -107,15 +113,177 @@ def test_policy(env, agent, episodes=100):
                 break
     print("DEBUG: Q-function")
     pprint(dict(agent.Q))
+    # plot_blackjack_values(agent.Q)  # visualize Q-function
     print("DEBUG: policy")
     pprint(dict(policy))
+    plot_policy(
+        policy, title="Learned Policy for Blackjack"
+    )  # visualize policy
     print(
-        f"Average reward over {episodes} episodes: {total_rewards / episodes:.2f}"
+        f"Average reward over {episodes} episodes: {total_rewards / episodes:.6f}"
     )
 
 
+def plot_blackjack_values(Q):
+    """Plot action-value functions for usable and non-usable ace states."""
+    if plt is None:
+        # Do nothing if matplotlib is not installed
+        return
+
+    x_vals = range(1, 11)  # dealer's visible card (1-10)
+    y_vals = range(4, 22)  # player's hand value (4-21)
+
+    # Initialize grids for usable and non-usable ace states
+    hit_values_usable = np.zeros((len(y_vals), len(x_vals)))
+    stand_values_usable = np.zeros((len(y_vals), len(x_vals)))
+    hit_values_non_usable = np.zeros((len(y_vals), len(x_vals)))
+    stand_values_non_usable = np.zeros((len(y_vals), len(x_vals)))
+
+    # Populate the grids based on Q-values
+    for player_sum in y_vals:
+        for dealer_card in x_vals:
+            for usable_ace in [True, False]:
+                state = (player_sum, dealer_card, usable_ace)
+                if state in Q:
+                    hit_value = Q[state][1]  # Q-value for 'hit'
+                    stand_value = Q[state][0]  # Q-value for 'stand'
+                    idx_y = player_sum - 4
+                    idx_x = dealer_card - 1
+
+                    if usable_ace:
+                        hit_values_usable[idx_y, idx_x] = hit_value
+                        stand_values_usable[idx_y, idx_x] = stand_value
+                    else:
+                        hit_values_non_usable[idx_y, idx_x] = hit_value
+                        stand_values_non_usable[idx_y, idx_x] = stand_value
+
+    # Plot the values
+    fig, axes = plt.subplots(1, 2, figsize=(20, 10))
+    # Set the window title
+    try:
+        fig.canvas.manager.set_window_title("Blackjack Values Visualization")
+    except Exception:
+        ...
+    plot_action_values(
+        axes[0],
+        x_vals,
+        y_vals,
+        stand_values_usable,
+        hit_values_usable,
+        "Usable Ace",
+    )
+    plot_action_values(
+        axes[1],
+        x_vals,
+        y_vals,
+        stand_values_non_usable,
+        hit_values_non_usable,
+        "No Usable Ace",
+    )
+    plt.show()
+
+
+def plot_action_values(ax, x_vals, y_vals, stand_values, hit_values, title):
+    """Helper function to plot action values."""
+    ax.set_title(title, fontsize=16)
+    ax.set_xlabel("Dealer's Visible Card", fontsize=14)
+    ax.set_ylabel("Player's Hand Value", fontsize=14)
+
+    # Plot "stand" values above the line
+    for y_idx, y_val in enumerate(y_vals):
+        ax.plot(
+            x_vals,
+            stand_values[y_idx, :],
+            'bo-',
+            label="Stand" if y_idx == 0 else "",
+        )
+
+    # Plot "hit" values below the line
+    for y_idx, y_val in enumerate(y_vals):
+        ax.plot(
+            x_vals,
+            hit_values[y_idx, :],
+            'ro-',
+            label="Hit" if y_idx == 0 else "",
+        )
+
+    ax.legend(fontsize=12)
+    ax.grid(True)
+
+
+def plot_policy(policy, title):
+    """Plot the policy as a grid showing the chosen action for each state."""
+    x_vals = range(1, 11)  # Dealer's visible card (1-10)
+    y_vals = range(4, 22)  # Player's hand value (4-21)
+
+    # Initialize grids for usable and non-usable ace states
+    policy_usable = np.zeros((len(y_vals), len(x_vals)))
+    policy_non_usable = np.zeros((len(y_vals), len(x_vals)))
+
+    # Populate the grids with the action chosen by the policy
+    for player_sum in y_vals:
+        for dealer_card in x_vals:
+            for usable_ace in [True, False]:
+                state = (player_sum, dealer_card, usable_ace)
+                if state in policy:
+                    action = policy[state]  # Chosen action
+                    idx_y = player_sum - 4
+                    idx_x = dealer_card - 1
+
+                    if usable_ace:
+                        policy_usable[idx_y, idx_x] = action
+                    else:
+                        policy_non_usable[idx_y, idx_x] = action
+
+    # Plot the policy grids
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    # Set the window title
+    try:
+        fig.canvas.manager.set_window_title("Blackjack Policy Visualization")
+    except Exception:
+        ...
+    plot_policy_grid(axes[0], x_vals, y_vals, policy_usable, "Usable Ace")
+    plot_policy_grid(
+        axes[1], x_vals, y_vals, policy_non_usable, "No Usable Ace"
+    )
+    fig.suptitle(title, fontsize=20)
+    plt.show()
+
+
+def plot_policy_grid(ax, x_vals, y_vals, policy_grid, title):
+    """Helper function to plot a single policy grid."""
+    ax.set_title(title, fontsize=16)
+    ax.set_xlabel("Dealer's Visible Card", fontsize=14)
+    ax.set_ylabel("Player's Hand Value", fontsize=14)
+
+    # Adjust extent to center grid squares on ticks
+    extent = [
+        min(x_vals) - 0.5,
+        max(x_vals) + 0.5,
+        min(y_vals) - 0.5,
+        max(y_vals) + 0.5,
+    ]
+
+    # Display the policy as a grid
+    cax = ax.imshow(
+        policy_grid,
+        cmap="coolwarm",
+        origin="lower",
+        extent=extent,
+    )
+
+    # Add colorbar for clarity
+    cbar = plt.colorbar(cax, ax=ax)
+    cbar.set_label("Action (0 = Stand, 1 = Hit)", fontsize=12)
+
+    # Configure axes
+    ax.set_xticks(x_vals)
+    ax.set_yticks(y_vals)
+    ax.grid(visible=True, color="black", linewidth=0.5)
+
+
 # Initialize and train
-mc_control = MonteCarloControl(env, epsilon=0.2)
+mc_control = MonteCarloControl(env, epsilon=0.5)
 mc_control.train(episodes=100000)
 
 # Test the trained policy
