@@ -100,31 +100,45 @@ class MonteCarloControl:
 
 
 # Test the trained policy
-def test_policy(env, agent, episodes=100):
-    policy = agent.policy
-    total_rewards = 0
-    for _ in range(episodes):
-        state = env.reset()[0]
-        while True:
-            action = policy[state]
-            state, reward, done, _, _ = env.step(action)
-            if done:
-                total_rewards += reward
-                break
-    print("DEBUG: Q-function")
-    pprint(dict(agent.Q))
-    # plot_blackjack_values(agent.Q)  # visualize Q-function
-    print("DEBUG: policy")
-    pprint(dict(policy))
+def test_policy(
+    env: gym.Env,
+    agents: list[MonteCarloControl],
+    episodes: int = 100,
+):
+    batch_rewards = []
+    policies = []
+    Qs = []
+    for agent in agents:
+        policy = agent.policy
+        total_rewards = 0
+        for _ in range(episodes):
+            state = env.reset()[0]
+            while True:
+                action = policy[state]
+                state, reward, done, _, _ = env.step(action)
+                if done:
+                    total_rewards += reward
+                    break
+        batch_rewards.append(total_rewards)
+        policies.append(policy)
+        Qs.append(agent.Q)
+    print("DEBUG: Q-functions")
+    pprint([dict(Q) for Q in Qs])
+    # plot_blackjack_values(
+    #     Qs, title="Learned Q-functions for Blackjack"
+    # )  # visualize Q-function
+    print("DEBUG: policies")
+    pprint([dict(policy) for policy in policies])
     plot_policy(
-        policy, title="Learned Policy for Blackjack"
+        policies, title="Learned Policies for Blackjack"
     )  # visualize policy
-    print(
-        f"Average reward over {episodes} episodes: {total_rewards / episodes:.6f}"
-    )
+    for i, rewards in enumerate(batch_rewards):
+        print(
+            f"[{i:02d}] Average reward over {episodes} episodes: {rewards / episodes:.6f}"
+        )
 
 
-def plot_blackjack_values(Q):
+def plot_blackjack_values(Qs: list[defaultdict], title: str):
     """Plot action-value functions for usable and non-usable ace states."""
     if plt is None:
         # Do nothing if matplotlib is not installed
@@ -134,28 +148,33 @@ def plot_blackjack_values(Q):
     y_vals = range(4, 22)  # player's hand value (4-21)
 
     # Initialize grids for usable and non-usable ace states
-    hit_values_usable = np.zeros((len(y_vals), len(x_vals)))
-    stand_values_usable = np.zeros((len(y_vals), len(x_vals)))
-    hit_values_non_usable = np.zeros((len(y_vals), len(x_vals)))
-    stand_values_non_usable = np.zeros((len(y_vals), len(x_vals)))
+    hit_values_usable = np.zeros((len(y_vals), len(x_vals)), dtype=float)
+    stand_values_usable = np.zeros((len(y_vals), len(x_vals)), dtype=float)
+    hit_values_non_usable = np.zeros((len(y_vals), len(x_vals)), dtype=float)
+    stand_values_non_usable = np.zeros((len(y_vals), len(x_vals)), dtype=float)
 
     # Populate the grids based on Q-values
-    for player_sum in y_vals:
-        for dealer_card in x_vals:
-            for usable_ace in [True, False]:
-                state = (player_sum, dealer_card, usable_ace)
-                if state in Q:
-                    hit_value = Q[state][1]  # Q-value for 'hit'
-                    stand_value = Q[state][0]  # Q-value for 'stand'
-                    idx_y = player_sum - 4
-                    idx_x = dealer_card - 1
+    for Q in Qs:
+        for player_sum in y_vals:
+            for dealer_card in x_vals:
+                for usable_ace in [True, False]:
+                    state = (player_sum, dealer_card, usable_ace)
+                    if state in Q:
+                        hit_value = Q[state][1]  # Q-value for 'hit'
+                        stand_value = Q[state][0]  # Q-value for 'stand'
+                        idx_y = player_sum - 4
+                        idx_x = dealer_card - 1
 
-                    if usable_ace:
-                        hit_values_usable[idx_y, idx_x] = hit_value
-                        stand_values_usable[idx_y, idx_x] = stand_value
-                    else:
-                        hit_values_non_usable[idx_y, idx_x] = hit_value
-                        stand_values_non_usable[idx_y, idx_x] = stand_value
+                        if usable_ace:
+                            hit_values_usable[idx_y, idx_x] = hit_value
+                            stand_values_usable[idx_y, idx_x] = stand_value
+                        else:
+                            hit_values_non_usable[idx_y, idx_x] = hit_value
+                            stand_values_non_usable[idx_y, idx_x] = stand_value
+        hit_values_usable /= len(Qs)
+        hit_values_non_usable /= len(Qs)
+        stand_values_usable /= len(Qs)
+        stand_values_non_usable /= len(Qs)
 
     # Plot the values
     fig, axes = plt.subplots(1, 2, figsize=(20, 10))
@@ -180,6 +199,7 @@ def plot_blackjack_values(Q):
         hit_values_non_usable,
         "No Usable Ace",
     )
+    fig.suptitle(title, fontsize=20)
     plt.show()
 
 
@@ -211,29 +231,32 @@ def plot_action_values(ax, x_vals, y_vals, stand_values, hit_values, title):
     ax.grid(True)
 
 
-def plot_policy(policy, title):
+def plot_policy(policies: list[defaultdict], title: str):
     """Plot the policy as a grid showing the chosen action for each state."""
     x_vals = range(1, 11)  # Dealer's visible card (1-10)
     y_vals = range(4, 22)  # Player's hand value (4-21)
 
     # Initialize grids for usable and non-usable ace states
-    policy_usable = np.zeros((len(y_vals), len(x_vals)))
-    policy_non_usable = np.zeros((len(y_vals), len(x_vals)))
+    policy_usable = np.zeros((len(y_vals), len(x_vals)), dtype=float)
+    policy_non_usable = np.zeros((len(y_vals), len(x_vals)), dtype=float)
 
     # Populate the grids with the action chosen by the policy
-    for player_sum in y_vals:
-        for dealer_card in x_vals:
-            for usable_ace in [True, False]:
-                state = (player_sum, dealer_card, usable_ace)
-                if state in policy:
-                    action = policy[state]  # Chosen action
-                    idx_y = player_sum - 4
-                    idx_x = dealer_card - 1
+    for policy in policies:
+        for player_sum in y_vals:
+            for dealer_card in x_vals:
+                for usable_ace in [True, False]:
+                    state = (player_sum, dealer_card, usable_ace)
+                    if state in policy:
+                        action = policy[state]  # Chosen action
+                        idx_y = player_sum - 4
+                        idx_x = dealer_card - 1
 
-                    if usable_ace:
-                        policy_usable[idx_y, idx_x] = action
-                    else:
-                        policy_non_usable[idx_y, idx_x] = action
+                        if usable_ace:
+                            policy_usable[idx_y, idx_x] += action
+                        else:
+                            policy_non_usable[idx_y, idx_x] += action
+        policy_usable /= len(policies)
+        policy_non_usable /= len(policies)
 
     # Plot the policy grids
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
@@ -282,9 +305,15 @@ def plot_policy_grid(ax, x_vals, y_vals, policy_grid, title):
     ax.grid(visible=True, color="black", linewidth=0.5)
 
 
-# Initialize and train
-mc_control = MonteCarloControl(env, epsilon=0.5)
-mc_control.train(episodes=100000)
+agents = []
+iterations = 5
+
+# Train multiple agents with different initialization
+for _ in range(iterations):
+    # Initialize and train
+    mc_control = MonteCarloControl(env, epsilon=0.4)
+    mc_control.train(episodes=1000000)
+    agents.append(mc_control)
 
 # Test the trained policy
-test_policy(env, mc_control, episodes=1000)
+test_policy(env, agents, episodes=1000)
